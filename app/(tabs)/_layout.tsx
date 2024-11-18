@@ -1,4 +1,4 @@
-import { Tabs } from 'expo-router';
+import { Tabs, usePathname } from 'expo-router';
 import React from 'react';
 import { Platform } from 'react-native';
 
@@ -7,10 +7,12 @@ import { IconSymbol } from '@/components/ui/IconSymbol';
 import TabBarBackground from '@/components/ui/TabBarBackground';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
+import { FontAwesome } from '@expo/vector-icons';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
-
+  const pathname = usePathname();
+  const isClientDetail = pathname.startsWith('/clientes/');
   return (
     <Tabs
       screenOptions={{
@@ -34,11 +36,34 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="explore"
+        name="configuracion"
         options={{
-          title: 'Explore',
+          title: 'configuracion',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
         }}
+      />
+      <Tabs.Screen
+        name="clientes/index"
+        options={{
+          tabBarIcon: ({ color }) => (
+            <FontAwesome name="users" size={24} color={color} />
+          ),
+          tabBarLabel: 'Clientes',
+          headerTitle: 'Clientes',
+          headerShown: true, // Oculta el header para clientes
+        }}
+      />
+      {/* Ruta dinámica para Detalles de Cliente */}
+      <Tabs.Screen
+        name="clientes/[id]"
+        options={({ route }) => ({
+          title: `${route.params?.nombre || 'Ninguno cargado'}`,
+          headerTitle: `${route.params?.nombre || 'Sin nombre'}`,
+          headerShown: true,
+          tabBarIcon: ({ color }) => (
+            <FontAwesome name="user" size={24} color={color} />
+          ),
+        })}
       />
     </Tabs>
   );
