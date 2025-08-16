@@ -1,6 +1,6 @@
 import { Tabs, usePathname } from 'expo-router';
 import React from 'react';
-import { Platform } from 'react-native';
+import { Platform, View } from 'react-native';
 
 import { HapticTab } from '@/components/HapticTab';
 import { IconSymbol } from '@/components/ui/IconSymbol';
@@ -22,7 +22,6 @@ export default function TabLayout() {
         tabBarBackground: TabBarBackground,
         tabBarStyle: Platform.select({
           ios: {
-            // Use a transparent background on iOS to show the blur effect
             position: 'absolute',
           },
           default: {},
@@ -31,17 +30,10 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Home',
+          title: 'configuracion',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
         }}
-      />
-      <Tabs.Screen
-        name="configuracion"
-        options={{
-          title: 'configuracion',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
-        }}
-      />
+      />     
       <Tabs.Screen
         name="clientes/index"
         options={{
@@ -56,14 +48,33 @@ export default function TabLayout() {
       {/* Ruta dinámica para Detalles de Cliente */}
       <Tabs.Screen
         name="clientes/[id]"
-        options={({ route }) => ({
-          title: `${route.params?.nombre || 'Ninguno cargado'}`,
-          headerTitle: `${route.params?.nombre || 'Sin nombre'}`,
-          headerShown: true,
-          tabBarIcon: ({ color }) => (
-            <FontAwesome name="user" size={24} color={color} />
-          ),
-        })}
+        options={({ route }) => {
+          const isDisabled = !route.params?.nombre || route.params?.nombre === 'Ninguno cargado';
+
+          return {
+            title: route.params?.nombre || 'Ninguno cargado',
+            headerTitle: route.params?.nombre || 'Sin nombre',
+            headerShown: true,
+            tabBarButton: (props) => (
+              <View
+                style={{
+                  flex: 1,
+                  opacity: isDisabled ? 0.5 : 1, // Cambia la opacidad si está deshabilitado
+                  pointerEvents: isDisabled ? 'none' : 'auto', // Desactiva los clics si está deshabilitado
+                }}
+              >
+                <HapticTab {...props} />
+              </View>
+            ),
+            tabBarIcon: ({ color }) => (
+              <FontAwesome
+                name="user"
+                size={24}
+                color={isDisabled ? 'gray' : color} // Icono en gris si está deshabilitado
+              />
+            ),
+          };
+        }}
       />
     </Tabs>
   );

@@ -15,6 +15,8 @@ type EventoBase = {
     cantidad: number | null;
     precioUnitario: number | null;
     producto: string;
+    productoColor?: string;
+    ganancia?: number | null;
   };
   
   type EventoCobrar = EventoBase & {

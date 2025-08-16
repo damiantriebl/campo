@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useLocalSearchParams } from 'expo-router';
 import {
   View,
@@ -13,7 +13,6 @@ import {
   Switch,
   FlatList,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons'; // Importa un icono de edición
 import { db } from '@/firebaseConfig';
 import {
   collection,
@@ -26,10 +25,15 @@ import {
   getDoc,
   where,
   updateDoc,
+  limit,
+  setDoc,
 } from 'firebase/firestore';
 import EventModule from '@/components/EventModule';
 import { EventoTy } from '@/schemas/eventoTy';
 import DatePickerModule from '@/components/DatePicker';
+import { timestampToDate } from '@/hooks/timestampToDate';
+import calcularTiempoDesde from '@/hooks/calcularTiempoDesde';
+import { useAuth } from '@/context/AuthProvider';
 
 type ProductoItem = {
   id: string;
@@ -37,6 +41,10 @@ type ProductoItem = {
   color: string;
   tipo: 'input' | 'entrego';
 };
+
+type DisplaySeparator = { type: 'separator'; id: string };
+type DisplayEvent = { type: 'event'; event: (EventoTy & { acumulado: number }) };
+type DisplayItem = DisplaySeparator | DisplayEvent;
 
 export default function EventsScreen() {
   const [eventos, setEventos] = useState<(EventoTy & { acumulado: number })[]>([]);
@@ -55,26 +63,37 @@ export default function EventsScreen() {
   const [precioUnitario, setPrecioUnitario] = useState<string>('');
   const [producto, setProducto] = useState('');
   const [productoColor, setProductoColor] = useState('');
+  const [ganancia, setGanancia] = useState<string>('');
   const [monto, setMonto] = useState<string>('');
   const [productos, setProductos] = useState<ProductoItem[]>([]);
   const [showProductPicker, setShowProductPicker] = useState(false);
+  const [precioHistorico, setPrecioHistorico] = useState({
+    precio: 0,
+    fecha: new Date(),
+  });
+  const [precioActual, setPrecioActual] = useState(precioHistorico.precio.toString());
+  const { empresaId } = useAuth();
+
 
   const fetchEvents = async () => {
+    if (!empresaId) return;
     const q = query(
-      collection(db, 'clientes', idCliente as string, 'eventos'),
+      collection(db, 'empresas', empresaId, 'clientes', idCliente as string, 'eventos'),
       where('borrado', '==', false),
       orderBy('creado', 'asc'),
     );
     const snap = await getDocs(q);
     const eventosData = snap.docs.map(doc => ({ ...doc.data(), id: doc.id }));
     let acumulado = 0;
-    const eventosWithAcumulado = eventosData.map((evento: EventoTy) => {
+    const eventosWithAcumulado = eventosData.map((evento: any) => {
       let valorEvento = 0;
 
       if (evento.tipo === 'bajar') {
         const cantidad = evento.cantidad ?? 0;
         const precioUnitario = evento.precioUnitario ?? 0;
-        valorEvento = -(cantidad * precioUnitario);
+        const precioHistorico = precioActual ? parseFloat(precioActual) : 0;
+        const gananciaEv = evento.ganancia ?? 0;
+        valorEvento = -(cantidad * (precioUnitario + gananciaEv + precioHistorico));
       } else if (evento.tipo === 'entrego') {
         valorEvento = evento.monto ?? 0;
       }
@@ -88,29 +107,64 @@ export default function EventsScreen() {
 
   useEffect(() => {
     fetchEvents();
-  }, [idCliente]);
+  }, [idCliente, empresaId]);
 
   const fetchProducts = async () => {
     try {
-      const productsDocRef = doc(db, 'configuracion', 'productos');
+      if (!empresaId) return;
+      const productsDocRef = doc(db, 'empresas', empresaId, 'configuracion', 'productos');
       const docSnap = await getDoc(productsDocRef);
       if (docSnap.exists()) {
         const data = docSnap.data();
         const items = data.items || [];
         setProductos(items);
       } else {
-        console.log('No such document!');
+        // Fallback a configuración antigua en raíz y migración
+        const legacyRef = doc(db, 'configuracion', 'productos');
+        const legacySnap = await getDoc(legacyRef);
+        if (legacySnap.exists()) {
+          const data = legacySnap.data();
+          const items = data.items || [];
+          setProductos(items);
+          // migrar copia al espacio de la empresa
+          await setDoc(productsDocRef, { items });
+        } else {
+          console.log('No hay productos configurados');
+        }
       }
     } catch (error) {
       console.error(error);
       alert('Error al obtener los productos');
     }
   };
+  const fetchLatestPrice = async () => {
+    try {
+      if (!empresaId) return;
+      const precioHistoricoRef = collection(db, 'empresas', empresaId, 'precioHistorico');
+      const latestPriceQuery = query(precioHistoricoRef, orderBy('fecha', 'desc'), limit(1));
+      const querySnapshot = await getDocs(latestPriceQuery);
+      if (!querySnapshot.empty) {
+        const latestPrice = querySnapshot.docs[0].data();
+        setPrecioHistorico({
+          precio: latestPrice.precio,
+          fecha: timestampToDate(latestPrice.fecha)
+        });
+        setPrecioActual(latestPrice.precio.toString());
+        console.log('Último precio:', latestPrice);
+      } else {
+        console.log('No hay datos en precioHistorico');
+      }
+    } catch (error) {
+      console.error('Error al obtener el último precio:', error);
+      alert('Error al obtener el último precio');
+    }
+  };
 
   useEffect(() => {
     fetchEvents();
     fetchProducts();
-  }, [idCliente]);
+    fetchLatestPrice()
+  }, [idCliente, empresaId]);
 
   const handleSaveEvent = async () => {
     try {
@@ -123,7 +177,7 @@ export default function EventsScreen() {
         actualizado: Timestamp.fromDate(actualizado),
       };
 
-      let newEvent: EventoTy;
+      let newEvent: any;
 
       if (tipo === 'bajar') {
         if (!cantidad || !precioUnitario || !producto.trim()) {
@@ -136,6 +190,7 @@ export default function EventsScreen() {
           tipo: 'bajar',
           cantidad: parseFloat(cantidad),
           precioUnitario: parseFloat(precioUnitario),
+          ganancia: ganancia ? parseFloat(ganancia) : 0,
           producto,
           productoColor,
         };
@@ -152,11 +207,12 @@ export default function EventsScreen() {
         };
       }
 
+      if (!empresaId) return;
       if (editingEventId) {
-        await updateDoc(doc(db, 'clientes', idCliente as string, 'eventos', editingEventId), newEvent);
+        await updateDoc(doc(db, 'empresas', empresaId, 'clientes', idCliente as string, 'eventos', editingEventId), newEvent);
         setEditingEventId(null);
       } else {
-        await addDoc(collection(db, 'clientes', idCliente as string, 'eventos'), newEvent);
+        await addDoc(collection(db, 'empresas', empresaId, 'clientes', idCliente as string, 'eventos'), newEvent);
       }
 
       setModalVisible(false);
@@ -172,18 +228,19 @@ export default function EventsScreen() {
   const handleEditEvent = (event: EventoTy & { acumulado: number }) => {
     setEditingEventId(event.id);
     setTipo(event.tipo);
-    setNotas(event.notas);
+    setNotas(event.notas || '');
     setBorrado(event.borrado);
     setEditado(event.editado);
     setCreado(event.creado.toDate());
     setActualizado(event.actualizado.toDate());
     if (event.tipo === 'bajar') {
-      setCantidad(event.cantidad.toString());
-      setPrecioUnitario(event.precioUnitario.toString());
+      setCantidad((event.cantidad ?? 0).toString());
+      setPrecioUnitario((event.precioUnitario ?? 0).toString());
+      setGanancia((event.ganancia ?? 0).toString());
       setProducto(event.producto);
-      setProductoColor(event.productoColor);
+      setProductoColor(event.productoColor || '');
     } else {
-      setMonto(event.monto.toString());
+      setMonto((event.monto ?? 0).toString());
     }
     setModalVisible(true);
   };
@@ -208,16 +265,57 @@ export default function EventsScreen() {
         <Text style={styles.addButtonText}>Agregar Evento</Text>
       </TouchableOpacity>
 
-      {/* Existing event list */}
+      {/* Existing event list with zero-debt separator and split overpayments */}
       <ScrollView style={styles.eventListContainer}>
         {eventos.length === 0 ? (
           <Text style={styles.loadingText}>Cargando eventos...</Text>
         ) : (
-          eventos.map(evento => (
-            <View key={evento.id} style={styles.eventItemContainer}>
-              <EventModule {...evento} handleEditEvento={() => handleEditEvent(evento)} />
-            </View>
-          ))
+          (() => {
+            const asc = [...eventos].reverse();
+            const itemsAsc: DisplayItem[] = [];
+            let prevAcum = 0;
+            for (let i = 0; i < asc.length; i++) {
+              const e = asc[i];
+              if (e.tipo === 'entrego' && prevAcum < 0) {
+                const monto = e.monto ?? 0;
+                const needed = -prevAcum;
+                if (monto > needed) {
+                  // part to reach zero
+                  const part1 = { ...e, id: e.id + '-part1', monto: needed, acumulado: 0 } as (EventoTy & { acumulado: number });
+                  itemsAsc.push({ type: 'event', event: part1 });
+                  itemsAsc.push({ type: 'separator', id: e.id + '-sep' });
+                  const remainder = monto - needed;
+                  const part2 = { ...e, id: e.id + '-part2', monto: remainder, acumulado: e.acumulado } as (EventoTy & { acumulado: number });
+                  itemsAsc.push({ type: 'event', event: part2 });
+                  prevAcum = part2.acumulado;
+                  continue;
+                } else if (monto === needed) {
+                  itemsAsc.push({ type: 'event', event: e });
+                  itemsAsc.push({ type: 'separator', id: e.id + '-sep' });
+                  prevAcum = 0;
+                  continue;
+                }
+              }
+              itemsAsc.push({ type: 'event', event: e });
+              prevAcum = e.acumulado;
+            }
+            const itemsDesc = itemsAsc.reverse();
+            return itemsDesc.map((item) => {
+              if (item.type === 'separator') {
+                return (
+                  <View key={item.id} style={styles.separatorContainer}>
+                    <Text style={styles.separatorText}>Canceló la deuda</Text>
+                  </View>
+                );
+              }
+              const ev = item.event;
+              return (
+                <View key={ev.id} style={styles.eventItemContainer}>
+                  <EventModule {...ev} handleEditEvento={() => handleEditEvent(ev)} />
+                </View>
+              );
+            });
+          })()
         )}
       </ScrollView>
 
@@ -253,7 +351,29 @@ export default function EventsScreen() {
           <View style={styles.section}>
             {/* Conditional Fields Based on Tipo */}
             {tipo === 'bajar' ? (
-              <View style={styles.section}>
+              <View style={styles.sectionBolsa}>
+                <View style={styles.tipoContainer}>
+                  <Text style={styles.label}>Precio de la bolsa:</Text>
+                  <Text style={styles.fechaPrecio}>
+                    mismo precio desde hace {calcularTiempoDesde(precioHistorico.fecha)}
+                  </Text>
+                </View>
+                <View style={styles.tipoContainer}>
+                  {editingEventId ? (
+                    <TextInput
+                      style={styles.input}
+                      value={precioActual}
+                      onChangeText={(text) => {
+                        const numericText = text.replace(/[^0-9]/g, '');
+                        setPrecioActual(numericText);
+                      }}
+                      placeholder="Precio actual"
+                      keyboardType="numeric"
+                    />
+                  ) : (
+                    <Text style={styles.labelPrice}>{precioHistorico.precio.toString()}</Text>
+                  )}
+                </View>
                 <Text style={styles.label}>Cantidad:</Text>
                 <TextInput
                   style={styles.input}
@@ -276,7 +396,17 @@ export default function EventsScreen() {
                   placeholder="Precio Unitario"
                   keyboardType="numeric"
                 />
-
+                <Text style={styles.label}>Ganancia:</Text>
+                <TextInput
+                  style={styles.input}
+                  value={ganancia}
+                  onChangeText={(text) => {
+                    const numericText = text.replace(/[^0-9]/g, '');
+                    setGanancia(numericText);
+                  }}
+                  placeholder="Ganancia"
+                  keyboardType="numeric"
+                />
                 <Text style={styles.label}>Producto:</Text>
                 <TouchableOpacity
                   style={styles.input}
@@ -397,6 +527,22 @@ export default function EventsScreen() {
   );
 }
 const styles = StyleSheet.create({
+  configButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 10,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: '#007BFF',
+    borderRadius: 8,
+    backgroundColor: '#f5f5f5',
+  },
+  configButtonText: {
+    marginLeft: 5,
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#007BFF',
+  },
   container: { flex: 1, backgroundColor: '#f5f5f5', padding: 20 },
   addButton: {
     backgroundColor: '#007BFF',
@@ -410,7 +556,18 @@ const styles = StyleSheet.create({
   modalContainer: { padding: 20, backgroundColor: '#fff', flexGrow: 1 },
   modalTitle: { fontSize: 24, fontWeight: 'bold', marginBottom: 20, textAlign: 'center' },
   section: { marginVertical: 15 },
+  sectionBolsa: { flex: 1, flexDirection: 'column', justifyContent: 'space-between' },
   label: { fontSize: 16, fontWeight: 'bold', marginBottom: 5 },
+  labelPrice: {
+    fontSize: 30,
+    fontWeight: 'bold',
+    marginBottom: 15,
+    color: 'red'
+  },
+  fechaPrecio: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
   input: {
     borderWidth: 1,
     borderColor: '#ddd',
@@ -465,6 +622,18 @@ const styles = StyleSheet.create({
     padding: 15,
     borderBottomWidth: 1,
     borderBottomColor: '#ccc',
+  },
+  separatorContainer: {
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  separatorText: {
+    backgroundColor: '#ffe27a',
+    color: '#000',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    fontWeight: 'bold',
   },
   productItemContent: {
     flexDirection: 'row',
