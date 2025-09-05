@@ -1,4 +1,4 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import { DarkTheme, DefaultTheme, ThemeProvider as NavigationThemeProvider } from '@react-navigation/native';
 import { useFonts } from 'expo-font';
 import { Stack, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -8,6 +8,11 @@ import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { AuthProvider, useAuth } from '@/context/AuthProvider';
+import { ClientSelectionProvider } from '@/context/ClientSelectionProvider';
+import { ThemeProvider } from '@/context/ThemeProvider';
+import { RealtimeDataProvider } from '@/context/RealtimeDataProvider';
+import { ToastProvider } from '@/context/ToastProvider';
+import OfflineStatusBar from '@/components/OfflineStatusBar';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
@@ -29,12 +34,21 @@ export default function RootLayout() {
   }
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <AuthProvider>
-        <AppNavigator />
-        <StatusBar style="auto" />
-      </AuthProvider>
-    </ThemeProvider>
+    <NavigationThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+      <ThemeProvider>
+        <ToastProvider>
+          <AuthProvider>
+            <RealtimeDataProvider>
+              <ClientSelectionProvider>
+                <AppNavigator />
+                <OfflineStatusBar />
+                <StatusBar style="auto" />
+              </ClientSelectionProvider>
+            </RealtimeDataProvider>
+          </AuthProvider>
+        </ToastProvider>
+      </ThemeProvider>
+    </NavigationThemeProvider>
   );
 }
 

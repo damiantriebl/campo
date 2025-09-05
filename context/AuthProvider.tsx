@@ -1,12 +1,16 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged, getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, User } from 'firebase/auth';
-import { db } from '@/firebaseConfig';
-import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
+import { auth } from '@/firebaseConfig';
+import { 
+  createUserProfile, 
+  getUserCompanyMemberships,
+  getUserCompanyMembershipsWithDetails 
+} from '@/schemas/firestore-utils';
+import { UserCompanyMembership } from '@/schemas/types';
+import NotificationService from '@/services/NotificationService';
 
-type EmpresaMembership = {
-  empresaId: string;
-  role: 'owner' | 'member' | 'viewer';
-};
+// Using the type from schemas/types.ts
+type EmpresaMembership = UserCompanyMembership & { companyName?: string };
 
 type AuthContextValue = {
   user: User | null;
@@ -30,15 +34,19 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [empresas, setEmpresas] = useState<EmpresaMembership[]>([]);
 
   useEffect(() => {
-    const auth = getAuth();
     const unsub = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       setLoading(false);
       if (!u) {
         setEmpresaId(null);
         setEmpresas([]);
+        // Clean up notification service
+        NotificationService.getInstance().cleanup();
         return;
       }
+      
+      // Initialize notification service for authenticated user
+      await NotificationService.getInstance().initialize(u.uid);
       await refreshEmpresasInternal(u.uid);
     });
     return () => unsub();
@@ -46,15 +54,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   const refreshEmpresasInternal = async (uid: string) => {
     try {
-      const userEmpresasRef = collection(db, 'usuarios', uid, 'empresas');
-      const snap = await getDocs(userEmpresasRef);
-      const items: EmpresaMembership[] = snap.docs.map((d) => ({ empresaId: d.id, role: (d.data().role || 'member') as EmpresaMembership['role'] }));
-      setEmpresas(items);
-      if (items.length === 1) {
-        setEmpresaId(items[0].empresaId);
+      const memberships = await getUserCompanyMembershipsWithDetails(uid);
+      setEmpresas(memberships);
+      if (memberships.length === 1) {
+        setEmpresaId(memberships[0].empresaId);
       }
     } catch (e) {
-      console.error(e);
+      console.error('Error refreshing empresas:', e);
     }
   };
 
@@ -64,22 +70,18 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   const signInWithEmail = async (email: string, password: string) => {
-    const auth = getAuth();
     await signInWithEmailAndPassword(auth, email, password);
   };
 
   const signUpWithEmail = async (email: string, password: string) => {
-    const auth = getAuth();
     const cred = await createUserWithEmailAndPassword(auth, email, password);
-    // create user doc
-    await setDoc(doc(db, 'usuarios', cred.user.uid), {
-      email: cred.user.email,
-      creado: new Date(),
-    });
+    // Create user profile document
+    await createUserProfile(cred.user.uid, cred.user.email || email);
   };
 
   const signOutApp = async () => {
-    const auth = getAuth();
+    // Clean up notification service before signing out
+    NotificationService.getInstance().cleanup();
     await signOut(auth);
     setEmpresaId(null);
     setEmpresas([]);
