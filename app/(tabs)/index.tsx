@@ -3,316 +3,409 @@ import {
   View,
   StyleSheet,
   Text,
-  TextInput,
-  FlatList,
   TouchableOpacity,
-  Modal,
-  Platform,
+  Alert,
+  SafeAreaView,
+  FlatList,
 } from 'react-native';
-import { SketchPicker } from 'react-color'; // Web
-import { ColorPicker } from 'react-native-color-picker'; // Android/iOS
-import { doc, setDoc, getDoc, collection, addDoc, Timestamp } from 'firebase/firestore';
-import { db } from '@/firebaseConfig';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthProvider';
-import DatePickerModule from '@/components/DatePicker';
+import { useProducts } from '@/context/RealtimeDataProvider';
+import { Product, CreateProductData, UpdateProductData } from '@/schemas/types';
+import ProductService from '@/services/ProductService';
+import ProductForm from '@/components/ProductForm';
+// Removed drag and drop; we will use simple up/down selectors
 
-type ConfigItem = {
-  id: string;
-  input: string;
-  color: string;
-  tipo: 'input' | 'entrego';
-};
-
-export default function ConfiguracionScreen() {
+export default function ProductManagementScreen() {
+  const router = useRouter();
   const { empresaId } = useAuth();
-  const [configItems, setConfigItems] = useState<ConfigItem[]>([]);
-  const [editingIndex, setEditingIndex] = useState<number | null>(null);
-  const [newInput, setNewInput] = useState('');
-  const [colorPickerVisible, setColorPickerVisible] = useState(false);
-  const [currentColor, setCurrentColor] = useState('#808080');
-  const [precio, setPrecio] = useState('');
-  const [fecha, setFecha] = useState<Date>(new Date());
+  const { products, productsLoading, refreshProducts } = useProducts();
+  const [isLoading, setIsLoading] = useState(false);
+  const [formVisible, setFormVisible] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | undefined>();
+  const productService = ProductService.getInstance();
 
   useEffect(() => {
-    const fetchConfigItems = async () => {
-      try {
-        if (!empresaId) return;
-        const configDocRef = doc(db, 'empresas', empresaId, 'configuracion', 'productos');
-        const docSnap = await getDoc(configDocRef);
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          const items = data.items || [];
-          setConfigItems(items);
-        } else {
-          console.log('No such document!');
-        }
-      } catch (error) {
-        console.error(error);
-        alert('Error al obtener configuración');
-      }
-    };
+    initializeService();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    fetchConfigItems();
-  }, [empresaId]);
-
-  const handleAddItem = () => {
-    setConfigItems((prev) => [
-      ...prev,
-      { id: Math.random().toString(), input: newInput, color: currentColor, tipo: 'input' },
-    ]);
-    setNewInput('');
-    setCurrentColor('#808080');
-  };
-
-  const handleEditItem = (index: number) => {
-    setEditingIndex(index);
-    setNewInput(configItems[index].input);
-    setCurrentColor(configItems[index].color);
-  };
-
-  const handleSaveEdit = () => {
-    if (editingIndex !== null) {
-      const updatedItems = [...configItems];
-      updatedItems[editingIndex] = {
-        ...updatedItems[editingIndex],
-        input: newInput || updatedItems[editingIndex].input,
-        color: currentColor,
-      };
-      setConfigItems(updatedItems);
-      setEditingIndex(null);
-      setNewInput('');
-      setCurrentColor('#808080');
-    }
-  };
-
-  const handleDeleteItem = (id: string) => {
-    setConfigItems((prev) => prev.filter((item) => item.id !== id));
-  };
-
-  const handleReorder = (fromIndex: number, toIndex: number) => {
-    if (toIndex < 0 || toIndex >= configItems.length) return;
-    const updatedItems = [...configItems];
-    const [movedItem] = updatedItems.splice(fromIndex, 1);
-    updatedItems.splice(toIndex, 0, movedItem);
-    setConfigItems(updatedItems);
-  };
-
-  const handleSubmit = async () => {
+  const initializeService = async () => {
     try {
-      if (!empresaId) return;
-      const configDocRef = doc(db, 'empresas', empresaId, 'configuracion', 'productos');
-      await setDoc(configDocRef, { items: configItems });
-      alert('Configuración guardada con éxito');
+      await productService.initialize();
     } catch (error) {
-      console.error(error);
-      alert('Error al guardar configuración');
+      console.error('Error initializing product service:', error);
     }
   };
-  const handleSubmitPrecioHistorico = async () => {
-    if (!precio || isNaN(Number(precio))) {
-      alert('Por favor, introduce un precio válido.');
+
+  // Using real-time data from Firestore only
+
+  const handleRefreshProducts = async () => {
+    console.log('ProductManagementScreen.handleRefreshProducts: Manual refresh triggered');
+    try {
+      await refreshProducts();
+      console.log('ProductManagementScreen.handleRefreshProducts: Refresh completed', {
+        productsCount: products?.length
+      });
+    } catch (error) {
+      console.error('ProductManagementScreen.handleRefreshProducts: Refresh failed', error);
+    }
+  };
+
+  const handleCreateProduct = () => {
+    setEditingProduct(undefined);
+    setFormVisible(true);
+  };
+
+  const handleEditProduct = (product: Product) => {
+    setEditingProduct(product);
+    setFormVisible(true);
+  };
+
+  const handleSubmitProduct = async (productData: CreateProductData | UpdateProductData) => {
+    const context = 'ProductManagementScreen.handleSubmitProduct';
+    console.log(`${context}: Starting product submission`, {
+      empresaId,
+      isEditing: !!editingProduct,
+      editingProductId: editingProduct?.id,
+      productData,
+      currentProductsCount: products.length
+    });
+
+    if (!empresaId) {
+      console.error(`${context}: No empresaId available`);
+      Alert.alert('Error', 'No se pudo identificar la empresa');
       return;
     }
 
+    setIsLoading(true);
     try {
-      if (!empresaId) return;
-      const precioHistoricoRef = collection(db, 'empresas', empresaId, 'precioHistorico');
-      await addDoc(precioHistoricoRef, {
-        precio: Number(precio),
-        fecha: Timestamp.fromDate(fecha),
-      });
-      alert('Precio histórico guardado con éxito.');
-      setPrecio('');
-      setFecha(new Date());
+      if (editingProduct) {
+        console.log(`${context}: Updating existing product`, {
+          productId: editingProduct.id,
+          empresaId
+        });
+        // Update existing product
+        const result = await productService.updateProduct(
+          empresaId,
+          editingProduct.id,
+          productData as UpdateProductData
+        );
+
+        console.log(`${context}: Update result`, {
+          success: result.success,
+          errors: result.errors,
+          productId: editingProduct.id
+        });
+
+        if (result.success) {
+          Alert.alert('Éxito', 'Producto actualizado correctamente');
+          // Real-time listener will update the products automatically
+        } else {
+          console.error(`${context}: Update failed`, { errors: result.errors });
+          Alert.alert('Error', result.errors?.join('\n') || 'Error al actualizar producto');
+        }
+      } else {
+        console.log(`${context}: Creating new product`);
+        // Create new product
+        const posicion = products?.length || 0;
+        const newProductData: CreateProductData = {
+          ...(productData as Omit<CreateProductData, 'posicion'>),
+          posicion, // Ensure posicion is always a valid number
+        };
+
+        console.log(`${context}: Calling productService.createProduct`, {
+          empresaId,
+          newProductData,
+          posicionValue: posicion,
+          posicionType: typeof posicion,
+          productsLength: products?.length,
+          productsType: typeof products
+        });
+
+        const result = await productService.createProduct(empresaId, newProductData);
+
+        console.log(`${context}: Creation result`, {
+          success: result.success,
+          data: result.data,
+          errors: result.errors
+        });
+
+        if (result.success) {
+          console.log(`${context}: Product created successfully`, {
+            productId: result.data,
+            empresaId
+          });
+          Alert.alert('Éxito', 'Producto creado correctamente');
+          // Real-time listener will update the products automatically
+        } else {
+          console.error(`${context}: Creation failed`, { errors: result.errors });
+          Alert.alert('Error', result.errors?.join('\n') || 'Error al crear producto');
+        }
+      }
     } catch (error) {
-      console.error(error);
-      alert('Error al guardar el precio histórico.');
+      console.error(`${context}: Exception during product submission`, {
+        error: error instanceof Error ? {
+          name: error.name,
+          message: error.message,
+          stack: error.stack
+        } : error,
+        empresaId,
+        isEditing: !!editingProduct
+      });
+      Alert.alert('Error', 'No se pudo guardar el producto');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDeleteProduct = async (product: Product) => {
+    if (!empresaId) return;
+
+    setIsLoading(true);
+    try {
+      // Check for dependencies
+      const dependencies = await productService.checkProductDependencies(empresaId, product.id);
+
+      if (dependencies.hasTransactions) {
+        Alert.alert(
+          'No se puede eliminar',
+          `Este producto tiene ${dependencies.transactionCount} transacciones asociadas. No se puede eliminar.`
+        );
+        return;
+      }
+
+      const result = await productService.deleteProduct(empresaId, product.id);
+
+      if (result.success) {
+        Alert.alert('Éxito', 'Producto eliminado correctamente');
+        // Real-time listener will update the products automatically
+      } else {
+        Alert.alert('Error', result.errors?.join('\n') || 'Error al eliminar producto');
+      }
+    } catch (error) {
+      console.error('Error deleting product:', error);
+      Alert.alert('Error', 'No se pudo eliminar el producto');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleMoveProduct = async (fromIndex: number, toIndex: number) => {
+    if (!empresaId || !products) return;
+
+    const sorted = [...products].sort((a, b) => (a.posicion || 0) - (b.posicion || 0));
+    if (fromIndex < 0 || fromIndex >= sorted.length || toIndex < 0 || toIndex >= sorted.length) return;
+    if (fromIndex === toIndex) return;
+
+    const product = sorted[fromIndex];
+    setIsLoading(true);
+    try {
+      const result = await productService.moveProduct(empresaId, product.id, fromIndex, toIndex, sorted);
+      if (!result.success) {
+        Alert.alert('Error', result.errors?.join('\n') || 'No se pudo mover el producto');
+      }
+      // Real-time listener actualizará la lista
+    } catch (error) {
+      console.error('ProductManagementScreen.handleMoveProduct: Exception', error);
+      Alert.alert('Error', 'No se pudo mover el producto');
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.topContainer}>
-        <FlatList
-          data={configItems}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item, index }) => (
-            <View style={[styles.item, { backgroundColor: item.color }]}>
-              {editingIndex === index ? (
-                <>
-                  <TextInput
-                    style={styles.input}
-                    value={newInput}
-                    onChangeText={setNewInput}
-                    placeholder="Editar texto"
-                  />
-                  <TouchableOpacity
-                    style={[styles.colorBox, { backgroundColor: currentColor }]}
-                    onPress={() => setColorPickerVisible(true)}
-                  >
-                    <Ionicons name="color-palette" size={24} color="#fff" />
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.saveButton} onPress={handleSaveEdit}>
-                    <Ionicons name="checkmark" size={24} color="#fff" />
-                  </TouchableOpacity>
-                </>
-              ) : (
-                <>
-                  <Text style={styles.text}>{item.input}</Text>
-                  <View style={styles.actionButtons}>
-                    <TouchableOpacity onPress={() => handleEditItem(index)} style={styles.iconButton}>
-                      <Ionicons name="pencil" size={24} color="#007BFF" />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => handleDeleteItem(item.id)} style={styles.iconButton}>
-                      <Ionicons name="trash" size={24} color="#FF0000" />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => handleReorder(index, index - 1)} style={styles.iconButton}>
-                      <Ionicons name="arrow-up" size={24} color="#000" />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => handleReorder(index, index + 1)} style={styles.iconButton}>
-                      <Ionicons name="arrow-down" size={24} color="#000" />
-                    </TouchableOpacity>
-                  </View>
-                </>
-              )}
-            </View>
-          )}
-        />
-        <View style={styles.addItemContainer}>
-          <TextInput
-            style={styles.input}
-            placeholder="Nuevo texto"
-            value={newInput}
-            onChangeText={setNewInput}
-          />
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.title}>Gestión de Productos</Text>
+        <View style={styles.headerButtons}>
           <TouchableOpacity
-            style={[styles.colorBox, { backgroundColor: currentColor }]}
-            onPress={() => setColorPickerVisible(true)}
+            style={styles.refreshButton}
+            onPress={handleRefreshProducts}
+            disabled={isLoading || productsLoading}
           >
-            <Ionicons name="color-palette" size={24} color="#fff" />
+            <Ionicons name="refresh" size={20} color="#25B4BD" />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.addButton} onPress={handleAddItem}>
+          <TouchableOpacity
+            style={styles.switchCompanyButton}
+            onPress={() => {
+              console.log('Navigating to company management');
+              router.push('/(company)');
+            }}
+            disabled={isLoading}
+          >
+            <Ionicons name="business" size={20} color="#8E44AD" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.addButton}
+            onPress={handleCreateProduct}
+            disabled={isLoading}
+          >
             <Ionicons name="add" size={24} color="#fff" />
-            <Text style={styles.addButtonText}>Agregar</Text>
+            <Text style={styles.addButtonText}>Nuevo</Text>
           </TouchableOpacity>
         </View>
-        <TouchableOpacity style={styles.submitButton} onPress={handleSubmit}>
-          <Ionicons name="save" size={24} color="#fff" />
-          <Text style={styles.submitButtonText}>Guardar configuración</Text>
-        </TouchableOpacity>
-
-        {/* Modal para Color Picker */}
-        <Modal visible={colorPickerVisible} transparent animationType="slide">
-          <View style={styles.modalContainer}>
-            {Platform.OS === 'web' ? (
-              <SketchPicker
-                color={currentColor}
-                onChangeComplete={(color) => {
-                  setCurrentColor(color.hex);
-                  setColorPickerVisible(false);
-                }}
-              />
-            ) : (
-              <ColorPicker
-                onColorSelected={(color) => {
-                  setCurrentColor(color);
-                  setColorPickerVisible(false);
-                }}
-                style={styles.nativePicker}
-              />
-            )}
-          </View>
-        </Modal>
       </View>
-      <View style={styles.bottomContainer}>
-      <TextInput
-          style={styles.input}
-          placeholder="Introduce el precio"
-          value={precio}
-          onChangeText={setPrecio}
-          keyboardType="numeric"
+
+      <View style={styles.content}>
+        <FlatList
+          data={products ? [...products].sort((a, b) => (a.posicion || 0) - (b.posicion || 0)) : []}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item, index }) => (
+            <View style={styles.productRow}>
+              <View style={styles.productInfo}>
+                <View style={[styles.colorDot, { backgroundColor: item.colorFondo }]} />
+                <Text style={styles.productName}>{item.nombre}</Text>
+              </View>
+              <View style={styles.rowActions}>
+                <TouchableOpacity
+                  style={[styles.iconButton, index === 0 && styles.iconButtonDisabled]}
+                  onPress={() => handleMoveProduct(index, index - 1)}
+                  disabled={index === 0 || isLoading}
+                >
+                  <Ionicons name="chevron-up" size={18} color={index === 0 ? '#bbb' : '#25B4BD'} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.iconButton, (products ? index === products.length - 1 : true) && styles.iconButtonDisabled]}
+                  onPress={() => handleMoveProduct(index, index + 1)}
+                  disabled={!products || index === products.length - 1 || isLoading}
+                >
+                  <Ionicons name="chevron-down" size={18} color={!products || index === products.length - 1 ? '#bbb' : '#25B4BD'} />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.iconButton} onPress={() => handleEditProduct(item)} disabled={isLoading}>
+                  <Ionicons name="create-outline" size={18} color="#2C3E50" />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.iconButton} onPress={() => handleDeleteProduct(item)} disabled={isLoading}>
+                  <Ionicons name="trash-outline" size={18} color="#E74C3C" />
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+          ListEmptyComponent={
+            <View style={{ padding: 16 }}>
+              <Text style={{ color: '#666' }}>{productsLoading ? 'Cargando productos...' : 'No hay productos'}</Text>
+            </View>
+          }
         />
-        <DatePickerModule value={fecha} onChange={setFecha} />
-        <TouchableOpacity style={styles.submitButton} onPress={handleSubmitPrecioHistorico}>
-          <Ionicons name="save" size={24} color="#fff" />
-          <Text style={styles.submitButtonText}>Guardar Precio Histórico</Text>
-        </TouchableOpacity>
       </View>
-    </View>
 
+      <ProductForm
+        visible={formVisible}
+        onClose={() => setFormVisible(false)}
+        onSubmit={handleSubmitProduct}
+        product={editingProduct}
+        isLoading={isLoading}
+      />
+    </SafeAreaView>
   );
 }
 
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f9f9f9' },
-  topContainer: { flex: 2, padding: 20 },
-  bottomContainer: { flex: 1, padding: 20, borderTopWidth: 1, borderColor: '#ddd' },
-  item: {
-    padding: 15,
-    marginVertical: 8,
+  container: {
+    flex: 1,
+    backgroundColor: '#ebebeb',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    paddingTop: 30,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  headerButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  refreshButton: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: '#f0f0f0',
+    borderWidth: 1,
+    borderColor: '#25B4BD',
+  },
+  switchCompanyButton: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: '#f0f0f0',
+    borderWidth: 1,
+    borderColor: '#8E44AD',
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  addButton: {
+    backgroundColor: '#25B4BD',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     borderRadius: 8,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  addButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  content: {
+    flex: 1,
+    paddingTop: 8,
+  },
+  productRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-  },
-  text: { fontSize: 18, color: '#fff', fontWeight: 'bold' },
-  input: {
-    borderWidth: 1,
-    borderColor: '#ddd',
+    backgroundColor: '#fff',
+    marginHorizontal: 12,
+    marginVertical: 6,
+    padding: 12,
     borderRadius: 8,
-    padding: 10,
-    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  productInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  colorDot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.1)',
+  },
+  productName: {
     fontSize: 16,
+    color: '#333',
+    fontWeight: '600',
   },
-  addItemContainer: {
+  rowActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 20,
   },
-  colorBox: {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
+  iconButton: {
+    padding: 8,
+    marginLeft: 6,
+    backgroundColor: '#f7f7f7',
+    borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#ddd',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginLeft: 10,
+    borderColor: '#e6e6e6',
   },
-  addButton: {
-    backgroundColor: '#007BFF',
-    padding: 10,
-    borderRadius: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginLeft: 10,
+  iconButtonDisabled: {
+    opacity: 0.6,
   },
-  submitButton: {
-    backgroundColor: '#28A745',
-    padding: 15,
-    borderRadius: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 20,
-  },
-  submitButtonText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    marginLeft: 10,
-    fontSize: 18,
-  },
-  modalContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-  actionButtons: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  nativePicker: { width: 300, height: 300 },
 });

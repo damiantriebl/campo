@@ -1,26 +1,57 @@
 {
   "expo": {
-    "name": "campo",
-    "slug": "campo",
+    "name": "Campo - Gestión de Ventas",
+    "slug": "campo-gestion-ventas",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "myapp",
+    "scheme": "campo",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "privacy": "public",
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
+    "description": "Aplicación para gestión de ventas, clientes y productos para pequeñas empresas",
+    "keywords": [
+      "ventas",
+      "gestión",
+      "clientes",
+      "productos",
+      "empresa"
+    ],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.santexgroup.campo"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      }
+      },
+      "permissions": [
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE",
+        "android.permission.WAKE_LOCK",
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE"
+      ],
+      "package": "com.santexgroup.campo",
+      "versionCode": 1
     },
     "web": {
       "bundler": "metro",
       "output": "static",
       "favicon": "./assets/images/favicon.png"
+    },
+    "extra": {
+      "googleClientId": "752493866551-92vnat1ff88sgprnadjukd816p1cjsqp.apps.googleusercontent.com",
+      "router": {},
+      "eas": {
+        "projectId": "c0013fd4-e820-4177-8301-b97fb53c4fea"
+      }
     },
     "plugins": [
       "expo-router",
@@ -32,10 +63,18 @@
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#25B4BD",
+          "defaultChannel": "default"
+        }
       ]
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "owner": "demt"
   }
 }

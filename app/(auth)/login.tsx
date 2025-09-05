@@ -1,8 +1,12 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, SafeAreaView } from 'react-native';
 import { useRouter } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
+import * as AuthSession from 'expo-auth-session';
+import { GoogleAuthProvider, signInWithCredential, getAuth, signInWithPopup } from 'firebase/auth';
+import { auth } from '@/firebaseConfig';
 import { useAuth } from '@/context/AuthProvider';
-import { getAuth, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import Constants from 'expo-constants';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -31,11 +35,48 @@ export default function LoginScreen() {
     }
   };
 
-  const handleGoogleWeb = async () => {
+  WebBrowser.maybeCompleteAuthSession();
+
+  const handleGoogle = async () => {
     try {
-      const auth = getAuth();
-      const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
+      setError(null);
+      if (Platform.OS === 'web') {
+        const webAuth = getAuth();
+        const provider = new GoogleAuthProvider();
+        await signInWithPopup(webAuth, provider);
+        router.replace('/(company)');
+        return;
+      }
+
+      const googleClientId = (Constants?.expoConfig?.extra as any)?.googleClientId as string | undefined;
+      if (!googleClientId) {
+        throw new Error('Falta configurar googleClientId en app.json -> expo.extra.googleClientId');
+      }
+
+      const redirectUri = AuthSession.makeRedirectUri({ useProxy: true });
+      const discovery = {
+        authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+        tokenEndpoint: 'https://oauth2.googleapis.com/token',
+      } as const;
+
+      const request = new AuthSession.AuthRequest({
+        clientId: googleClientId,
+        redirectUri,
+        scopes: ['openid', 'profile', 'email'],
+        responseType: AuthSession.ResponseType.IdToken,
+        // Google no admite PKCE con response_type=id_token
+        usePKCE: false,
+        extraParams: { prompt: 'select_account' },
+      });
+
+      const result = await request.promptAsync(discovery, { useProxy: true });
+      const idToken = (result as any)?.params?.id_token as string | undefined;
+      if (!idToken) {
+        throw new Error('No se obtuvo idToken de Google');
+      }
+
+      const credential = GoogleAuthProvider.credential(idToken);
+      await signInWithCredential(auth, credential);
       router.replace('/(company)');
     } catch (e: any) {
       setError(e?.message || 'Error con Google');
@@ -44,10 +85,10 @@ export default function LoginScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <div>
+      <View style={styles.headerBg}>
         <Text style={styles.brand}>Campo</Text>
         <Text style={styles.subtitle}>Gestión simple y segura</Text>
-      </div>
+      </View>
 
       <View style={styles.container}>
         <View style={styles.card}>
@@ -84,11 +125,9 @@ export default function LoginScreen() {
             <Text style={styles.secondaryText}>Crear cuenta</Text>
           </TouchableOpacity>
 
-          {Platform.OS === 'web' && (
-            <TouchableOpacity style={styles.googleButton} onPress={handleGoogleWeb}>
-              <Text style={styles.googleText}>Entrar con Google</Text>
-            </TouchableOpacity>
-          )}
+          <TouchableOpacity style={styles.googleButton} onPress={handleGoogle}>
+            <Text style={styles.googleText}>Entrar con Google</Text>
+          </TouchableOpacity>
         </View>
       </View>
     </SafeAreaView>
